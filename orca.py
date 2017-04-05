@@ -261,11 +261,16 @@ class Builder(object):
 			self.destination_tag = hash_digest("sha256", self.script_hash)
 			self.our_tags.append(self.destination_tag)
 
-		# TODO: At the moment we only really support importing from a Docker
-		#       registry. We need to extend the Dockerfile syntax to enable
-		#       sourcing OCI images from the local filesystem.
-		oci_destination = "oci:%s:%s" % (self.image_path, self.source_tag)
-		os_system(self.skopeo, "copy", docker_source, oci_destination)
+		if docker_source != "docker://scratch":
+			# TODO: At the moment we only really support importing from a Docker
+			#       registry. We need to extend the Dockerfile syntax to enable
+			#       sourcing OCI images from the local filesystem.
+			oci_destination = "oci:%s:%s" % (self.image_path, self.source_tag)
+			os_system(self.skopeo, "copy", docker_source, oci_destination)
+		else:
+			os.rmdir(self.image_path)
+			os_system(self.umoci, "init", "--layout="+self.image_path)
+			os_system(self.umoci, "new", "--image=%s:%s" % (self.image_path, self.source_tag))
 
 	def _dispatch_run(self, *args):
 		print("[*]     --> TODO. NOT IMPLEMENTED.")
