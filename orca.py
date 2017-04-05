@@ -19,6 +19,7 @@ import re
 import json
 import shlex
 import random
+import shutil
 import string
 import hashlib
 import argparse
@@ -30,6 +31,25 @@ class attrdict(object):
 	def __init__(self, *args, **kwargs):
 		self.__dict__ = dict(*args, **kwargs)
 
+
+def os_path_join(*parts):
+	"""
+	os_path_join is a sane implementation of os_path_join when it comes to
+	concatenating absolute paths. We also make all of the joining safe.
+	"""
+	if len(parts) == 0:
+		parts = ["."]
+	isabs = os.path.isabs(parts[0])
+
+	parts = [os_path_clean(part) for part in parts]
+	for idx, part in enumerate(parts):
+		if part.startswith("/"):
+			part = part.lstrip("/")
+		parts[idx] = part
+
+	if isabs:
+		parts = ["/"] + parts
+	return os.path.join(*parts)
 
 def os_path_clean(orig_path):
 	"""
@@ -229,7 +249,7 @@ class Builder(object):
 	def safepath(self, path):
 		"Returns a safe version of the given path."
 		path = os_path_clean(path)
-		path = os.path.join(self.root, path)
+		path = os_path_join(self.root, path)
 		path = os_path_clean(path)
 		return path
 
@@ -288,7 +308,7 @@ class Builder(object):
 		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
 
 		# Modify the config.json.
-		config_path = os.path.join(bundle_path, "config.json")
+		config_path = os_path_join(bundle_path, "config.json")
 		with open(config_path) as f:
 			config = json.load(f)
 		config["process"]["args"] = args
@@ -363,7 +383,39 @@ class Builder(object):
 		self.source_tag = self.destination_tag
 
 	def _dispatch_copy(self, *args):
-		print("[*]     --> TODO. NOT IMPLEMENTED.")
+		if len(args) != 2:
+			print("[*]     --> Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
+			raise RuntimeError("Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
+
+		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
+		print("[+]     --> Created new bundle for build: %s" % (bundle_path,))
+
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
+		# TODO: Add --rootless support.
+		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
+
+		# Copy the source to the destination.
+		# NOTE: This is probably unsafe because we don't have all of the safety
+		#       of FollowSymlinkInScope.
+		src = self.safepath(args[0])
+		dst = os_path_clean(os_path_join(bundle_path, "rootfs", os_path_clean(args[1])))
+		print("[*]     --> %s -> %s" % (src, dst))
+		if os.path.isdir(dst):
+			# This probably isn't correct.
+			dst = os_path_join(dst, os.path.basename(src))
+		if os.path.isdir(src):
+			shutil.copytree(src, dst, symlinks=True)
+		else:
+			shutil.copy2(src, dst)
+
+		# Repack the image.
+		os_system(self.umoci, "repack", "--image="+oci_destination, bundle_path)
+
+		# TODO: Delete the bundle.
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_add(self, *args):
 		print("[!]     --> ADD implementation doesn't implement decompression, remote downloads or chown root:root at the moment.")
