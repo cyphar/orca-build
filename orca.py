@@ -16,7 +16,10 @@
 
 import os
 import re
+import json
 import shlex
+import random
+import string
 import hashlib
 import argparse
 import tempfile
@@ -166,6 +169,9 @@ def os_system(*args):
 		print("[!]     --> %s failed with error code %d" % (args, ret))
 		raise RuntimeError("%s failed with error code %d" % (args, ret))
 
+def generate_id(size=32, chars=string.ascii_uppercase + string.ascii_lowercase + string.digits):
+	return ''.join(random.choice(chars) for _ in range(size))
+
 def hash_digest(algo, contents):
 	h = hashlib.new(algo)
 	h.update(contents.encode("utf-8"))
@@ -258,7 +264,7 @@ class Builder(object):
 			self.our_tags.append(self.source_tag)
 
 		if self.destination_tag is None:
-			self.destination_tag = hash_digest("sha256", self.script_hash)
+			self.destination_tag = hash_digest("sha256", self.script_hash) + "-dest"
 			self.our_tags.append(self.destination_tag)
 
 		if docker_source != "docker://scratch":
@@ -273,7 +279,35 @@ class Builder(object):
 			os_system(self.umoci, "new", "--image=%s:%s" % (self.image_path, self.source_tag))
 
 	def _dispatch_run(self, *args):
-		print("[*]     --> TODO. NOT IMPLEMENTED.")
+		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
+		print("[+]     --> Created new bundle for build: %s" % (bundle_path,))
+
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
+		# TODO: Add --rootless support.
+		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
+
+		# Modify the config.json.
+		config_path = os.path.join(bundle_path, "config.json")
+		with open(config_path) as f:
+			config = json.load(f)
+		config["process"]["args"] = args
+		config["process"]["terminal"] = False # XXX: Currently terminal=true breaks because stdin is /dev/null.
+		config["root"]["readonly"] = False
+		with open(config_path, "w") as f:
+			json.dump(config, f)
+
+		# Run the container.
+		ctr_id = "orca-build-" + generate_id()
+		os_system(self.runc, "run", "--bundle="+bundle_path, ctr_id)
+
+		# Repack the image.
+		os_system(self.umoci, "repack", "--image="+oci_destination, bundle_path)
+
+		# TODO: Delete the bundle.
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_cmd(self, *args):
 		# Decide whether we need to clear or change the cmd.
