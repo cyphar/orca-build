@@ -17,7 +17,9 @@
 import os
 import re
 import shlex
+import hashlib
 import argparse
+import tempfile
 import subprocess
 
 class attrdict(object):
@@ -153,20 +155,21 @@ def os_path_clean(orig_path):
 
 	return path
 
+def os_system(*args):
+	"""
+	Execute a command in the foreground, waiting until the command exits.
+	Standard I/O is inherited from this process.
+	"""
+	print("[*]     --> Executing %s." % (args,))
+	ret = subprocess.call(args, stdin=subprocess.DEVNULL)
+	if ret != 0:
+		print("[!]     --> %s failed with error code %d" % (args, ret))
+		raise RuntimeError("%s failed with error code %d" % (args, ret))
 
-class OCIImagePuller(object):
-	# TODO
-	pass
-
-
-class OCIImageMutator(object):
-	# TODO
-	pass
-
-
-class OCIRuntime(object):
-	# TODO
-	pass
+def hash_digest(algo, contents):
+	h = hashlib.new(algo)
+	h.update(contents.encode("utf-8"))
+	return h.hexdigest()
 
 
 class DockerfileParser(object):
@@ -226,63 +229,184 @@ class Builder(object):
 
 	def __init__(self, root, script="Dockerfile"):
 		self.root = root
+		self.image_path = None
+		self.our_tags = []
+		self.source_tag = None
+		self.destination_tag = None
+
 		with open(self.safepath(script)) as f:
-			self.script = DockerfileParser(f.read()).parse()
+			contents = f.read()
+			self.script = DockerfileParser(contents).parse()
+			self.script_hash = hash_digest("sha256", contents) + "-dest"
+
+		# TODO: Make these configurable and absolute paths.
+		self.skopeo = "skopeo"
+		self.umoci = "umoci"
+		self.runc = "runc"
 
 	def _dispatch_from(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		if len(args) != 1:
+			print("[*]     --> Invalid FROM format, can only have one argument -- FROM %r" % (args,))
+		docker_source = "docker://%s" % (args[0],)
+
+		if self.image_path is None:
+			self.image_path = tempfile.mkdtemp(prefix="orca-build.")
+			print("[+]     --> Created new image for build: %s" % (self.image_path,))
+
+		if self.source_tag is None:
+			self.source_tag = hash_digest("sha256", docker_source) + "-src"
+			self.our_tags.append(self.source_tag)
+
+		if self.destination_tag is None:
+			self.destination_tag = hash_digest("sha256", self.script_hash)
+			self.our_tags.append(self.destination_tag)
+
+		# TODO: At the moment we only really support importing from a Docker
+		#       registry. We need to extend the Dockerfile syntax to enable
+		#       sourcing OCI images from the local filesystem.
+		oci_destination = "oci:%s:%s" % (self.image_path, self.source_tag)
+		os_system(self.skopeo, "copy", docker_source, oci_destination)
 
 	def _dispatch_run(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		print("[*]     --> TODO. NOT IMPLEMENTED.")
 
 	def _dispatch_cmd(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Decide whether we need to clear or change the cmd.
+		if len(args) == 0:
+			cmd_args = ["--clear=config.cmd"]
+		else:
+			cmd_args = ["--config.cmd="+arg for arg in args]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *cmd_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_label(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Generate args.
+		label_args = ["--config.label="+arg for arg in args]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *label_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_maintainer(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Generate args.
+		author = " ".join(args)
+		maintainer_args = ["--author="+author, "--config.label=maintainer="+author]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *maintainer_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_expose(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Generate args.
+		# NOTE: There's no way AFAIK of clearing exposedports from a Dockerfile.
+		expose_args = ["--config.exposedports="+arg for arg in args]
 
-	def _dispatch_add(self, *args):
-		print("[!] ADD implementation doesn't implement decompression, remote downloads or chown root:root at the moment.")
-		return self._dispatch_copy(self, *args)
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *expose_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_copy(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		print("[*]     --> TODO. NOT IMPLEMENTED.")
+
+	def _dispatch_add(self, *args):
+		print("[!]     --> ADD implementation doesn't implement decompression, remote downloads or chown root:root at the moment.")
+		return self._dispatch_copy(self, *args)
 
 	def _dispatch_entrypoint(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Decide whether we need to clear or change the entrypoint.
+		if len(args) == 0:
+			entrypoint_args = ["--clear=config.entrypoint"]
+		else:
+			entrypoint_args = ["--config.entrypoint="+arg for arg in args]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *entrypoint_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_volume(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		# Generate args.
+		# NOTE: There's no way AFAIK of clearing volumes from a Dockerfile.
+		volume_args = ["--config.volume="+arg for arg in args]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *volume_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_user(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		if len(args) != 1:
+			print("[*]     --> Invalid USER format, can only have one argument -- USER %r" % (args,))
+			raise RuntimeError("Invalid USER format, can only have one argument -- USER %r" % (args,))
+
+		# Generate args.
+		user_args = ["--config.user="+args[0]]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *user_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
 
 	def _dispatch_workdir(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		if len(args) != 1:
+			print("[*]     --> Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
+			raise RuntimeError("Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
+
+		# Generate args.
+		workdir_args = ["--config.workdir="+args[0]]
+
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *workdir_args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
+
+	def _dispatch_env(self, *args):
+		print("[*]     --> TODO. NOT IMPLEMENTED.")
 
 	def _dispatch_arg(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
-
-	def _dispatch_onbuild(self, *args):
-		print("[-] ONBUILD is not supported by OCI.")
-		raise NotImplementedError
+		print("[*]     --> TODO. NOT IMPLEMENTED.")
 
 	def _dispatch_stopsignal(self, *args):
-		print("[*] TODO. NOT IMPLEMENTED.")
+		print("[*]     --> TODO. NOT IMPLEMENTED. REQUIRES NEWER OCI IMAGESPEC SUPPORT.")
+
+	def _dispatch_onbuild(self, *args):
+		print("[-]     --> ONBUILD is not supported by OCI.")
 
 	def _dispatch_shell(self, *args):
-		print("[-] SHELL is not supported by OCI.")
-		raise NotImplementedError
+		print("[-]     --> SHELL is not supported by OCI.")
 
 	def _dispatch_healthcheck(self, *args):
-		print("[-] HEALTHCHECK is not supported by OCI.")
-		raise NotImplementedError
+		print("[-]     --> HEALTHCHECK is not supported by OCI.")
 
 	def build(self):
 		for step in self.script:
