@@ -60,74 +60,18 @@ def os_path_clean(orig_path):
 
 	  >>> os_path_clean("abc")
 	  'abc'
-	  >>> os_path_clean("abc/def")
+	  >>> os_path_clean("abc/.//def/")
 	  'abc/def'
-	  >>> os_path_clean("a/b/c")
-	  'a/b/c'
-	  >>> os_path_clean(".")
-	  '.'
-	  >>> os_path_clean("..")
-	  '..'
-	  >>> os_path_clean("../..")
-	  '../..'
-	  >>> os_path_clean("../../abc")
-	  '../../abc'
-	  >>> os_path_clean("/abc")
-	  '/abc'
-	  >>> os_path_clean("/")
-	  '/'
-	  >>> os_path_clean("")
-	  '.'
-	  >>> os_path_clean("abc/")
-	  'abc'
-	  >>> os_path_clean("abc/def/")
-	  'abc/def'
-	  >>> os_path_clean("a/b/c/")
-	  'a/b/c'
-	  >>> os_path_clean("./")
-	  '.'
-	  >>> os_path_clean("../")
-	  '..'
-	  >>> os_path_clean("../../")
-	  '../..'
-	  >>> os_path_clean("/abc/")
-	  '/abc'
-	  >>> os_path_clean("abc//def//ghi")
-	  'abc/def/ghi'
-	  >>> os_path_clean("//abc")
-	  '/abc'
-	  >>> os_path_clean("///abc")
-	  '/abc'
-	  >>> os_path_clean("//abc//")
-	  '/abc'
-	  >>> os_path_clean("abc//")
-	  'abc'
-	  >>> os_path_clean("abc/./def")
-	  'abc/def'
-	  >>> os_path_clean("/./abc/def")
+	  >>> os_path_clean("/./../abc/def")
 	  '/abc/def'
-	  >>> os_path_clean("abc/.")
-	  'abc'
-	  >>> os_path_clean("abc/def/ghi/../jkl")
-	  'abc/def/jkl'
 	  >>> os_path_clean("abc/def/../ghi/../jkl")
 	  'abc/jkl'
-	  >>> os_path_clean("abc/def/..")
-	  'abc'
 	  >>> os_path_clean("abc/def/../..")
 	  '.'
-	  >>> os_path_clean("/abc/def/../..")
-	  '/'
-	  >>> os_path_clean("abc/def/../../..")
-	  '..'
-	  >>> os_path_clean("/abc/def/../../..")
-	  '/'
 	  >>> os_path_clean("abc/def/../../../ghi/jkl/../../../mno")
 	  '../../mno'
 	  >>> os_path_clean("/../abc")
 	  '/abc'
-	  >>> os_path_clean("abc/./../def")
-	  'def'
 	  >>> os_path_clean("abc//./../def")
 	  'def'
 	  >>> os_path_clean("abc/../../././../def")
@@ -270,6 +214,15 @@ class Builder(object):
 		self.umoci = "umoci"
 		self.runc = "runc"
 
+	def umoci_config(self, *args):
+		# Update the configuration.
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		oci_dest = self.destination_tag
+		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *args)
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
+
 	def _dispatch_from(self, *args):
 		if len(args) != 1:
 			print("[*]     --> Invalid FROM format, can only have one argument -- FROM %r" % (args,))
@@ -335,52 +288,24 @@ class Builder(object):
 			cmd_args = ["--clear=config.cmd"]
 		else:
 			cmd_args = ["--config.cmd="+arg for arg in args]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *cmd_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*cmd_args)
 
 	def _dispatch_label(self, *args):
 		# Generate args.
 		label_args = ["--config.label="+arg for arg in args]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *label_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*label_args)
 
 	def _dispatch_maintainer(self, *args):
 		# Generate args.
 		author = " ".join(args)
 		maintainer_args = ["--author="+author, "--config.label=maintainer="+author]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *maintainer_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*maintainer_args)
 
 	def _dispatch_expose(self, *args):
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing exposedports from a Dockerfile.
 		expose_args = ["--config.exposedports="+arg for arg in args]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *expose_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*expose_args)
 
 	def _dispatch_copy(self, *args):
 		if len(args) != 2:
@@ -427,27 +352,13 @@ class Builder(object):
 			entrypoint_args = ["--clear=config.entrypoint"]
 		else:
 			entrypoint_args = ["--config.entrypoint="+arg for arg in args]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *entrypoint_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*entrypoint_args)
 
 	def _dispatch_volume(self, *args):
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing volumes from a Dockerfile.
 		volume_args = ["--config.volume="+arg for arg in args]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *volume_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*volume_args)
 
 	def _dispatch_user(self, *args):
 		if len(args) != 1:
@@ -456,14 +367,7 @@ class Builder(object):
 
 		# Generate args.
 		user_args = ["--config.user="+args[0]]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *user_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*user_args)
 
 	def _dispatch_workdir(self, *args):
 		if len(args) != 1:
@@ -472,14 +376,7 @@ class Builder(object):
 
 		# Generate args.
 		workdir_args = ["--config.workdir="+args[0]]
-
-		# Update the configuration.
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_dest = self.destination_tag
-		os_system(self.umoci, "config", "--image="+oci_source, "--tag="+oci_dest, *workdir_args)
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		self.umoci_config(*workdir_args)
 
 	def _dispatch_env(self, *args):
 		print("[*]     --> TODO. NOT IMPLEMENTED.")
