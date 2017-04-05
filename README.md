@@ -9,6 +9,13 @@ to use `orca`):
 * [`runC`](https://github.com/opencontainers/runc)
 * [`skopeo`](https://github.com/projectatomic/skopeo)
 
+This was a [SUSE Hackweek project][hw] and is mainly intended to be a simple
+tool for users that might want to create images as a rootless user, or to play
+around with a simple PoC of how various OCI technologies can interact with each
+other.
+
+[hw]: https://hackweek.suse.com/15/projects/orca-build-oci-images-from-dockerfiles
+
 ### License ###
 
 `orca` is licensed under the terms of the GPLv3 (or later).
