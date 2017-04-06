@@ -300,7 +300,7 @@ class Builder(object):
 			os_system(self.umoci, "new", "--image=%s:%s" % (self.image_path, self.source_tag))
 
 	def _dispatch_run(self, *args, isjson=False):
-		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
+		bundle_path = tempfile.mkdtemp(prefix="orca-bundle.")
 		debug("Created new bundle for build: %s" % (bundle_path,))
 
 		oci_source = "%s:%s" % (self.image_path, self.source_tag)
@@ -402,7 +402,7 @@ class Builder(object):
 			# TODO: This isn't true and needs to be extended.
 			raise DockerfileFormatError("COPY can only have two arguments.")
 
-		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
+		bundle_path = tempfile.mkdtemp(prefix="orca-bundle.")
 		debug("Created new bundle for build: %s" % (bundle_path,))
 
 		oci_source = "%s:%s" % (self.image_path, self.source_tag)
@@ -557,7 +557,7 @@ if __name__ == "__main__":
 		level = logging.INFO
 		if config.verbose:
 			level = logging.DEBUG
-		logging.basicConfig(format="orca[%(levelname)s] %(message)s", level=level)
+		logging.basicConfig(format="orca-build[%(levelname)s] %(message)s", level=level)
 		main(ctx, config)
 
 	__wrapped_main__()

@@ -1,9 +1,9 @@
-## `orca` ##
+## `orca-build` ##
 
-`orca` allows you to build OCI images from a `Dockerfile` or `Orcafile`. It
+`orca-build` allows you to build OCI images from a `Dockerfile` or `Orcafile`. It
 doesn't require a daemon or root privileges to operate. It is a fairly small
 Python wrapper around the following projects (which are obviously requirements
-to use `orca`):
+to use `orca-build`):
 
 * [`umoci`](https://github.com/openSUSE/umoci)
 * [`runC`](https://github.com/opencontainers/runc)
@@ -19,14 +19,14 @@ other.
 ### Usage ###
 
 The usage is kinda like `docker build`. You provide it a build context that
-contains a `Dockerfile` and `orca` does the rest. I plan to add support for
+contains a `Dockerfile` and `orca-build` does the rest. I plan to add support for
 some more of the `docker build` flags in the near future, but at the moment it
 works pretty well.
 
 ```
-% orca .
-orca[INFO] BUILD[1 of 2]: from ['opensuse/amd64:42.2'] [json=False]
-orca[INFO] Created new image for build: /tmp/orca-build.r2xp0v8h
+% orca-build .
+orca-build[INFO] BUILD[1 of 2]: from ['opensuse/amd64:42.2'] [json=False]
+orca-build[INFO] Created new image for build: /tmp/orca-build.r2xp0v8h
   ---> [skopeo]
 Getting image source signatures
 Copying blob sha256:ed6542b73fb1330e3eee8294a805b9a231e30b3efa71390f938ce89f210db860
@@ -36,11 +36,11 @@ Copying config sha256:56fae18e2688b7d7caf2dd39960f0e6fda4383c174926e2ee47128f29d
 Writing manifest to image destination
 Storing signatures
   <--- [skopeo]
-orca[INFO] BUILD[2 of 2]: run ['echo', 'Hello orca!', '&&', 'cat', '/etc/os-release'] [json=False]
+orca-build[INFO] BUILD[2 of 2]: run ['echo', 'Hello orca-build!', '&&', 'cat', '/etc/os-release'] [json=False]
   ---> [umoci]
   <--- [umoci]
   ---> [runc]
-Hello orca!
+Hello orca-build!
 NAME="openSUSE Leap"
 VERSION="42.2"
 ID=opensuse
@@ -54,17 +54,17 @@ HOME_URL="https://www.opensuse.org/"
   <--- [runc]
   ---> [umoci]
   <--- [umoci]
-orca[INFO] BUILD: finished
+orca-build[INFO] BUILD: finished
 ```
 
 ### Installation ###
 
 I don't know how to do the whole "installation" thing with Python, so here's
-how you install `orca`. It only depends on the standard library (and having the
+how you install `orca-build`. It only depends on the standard library (and having the
 above tools in your `$PATH`):
 
 ```
-% sudo install -m0755 -D orca.py /usr/bin/orca
+% sudo install -m0755 -D orca-build /usr/bin/orca-build
 ```
 
 I've only tested it with Python 3.6, but it should work with most modern Python
@@ -72,10 +72,10 @@ I've only tested it with Python 3.6, but it should work with most modern Python
 
 ### License ###
 
-`orca` is licensed under the terms of the GPLv3 (or later).
+`orca-build` is licensed under the terms of the GPLv3 (or later).
 
 ```
-orca: container image builder
+orca-build: container image builder
 Copyright (C) 2017 SUSE LLC
 
 This program is free software: you can redistribute it and/or modify
