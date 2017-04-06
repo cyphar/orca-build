@@ -24,7 +24,36 @@ some more of the `docker build` flags in the near future, but at the moment it
 works pretty well.
 
 ```
-% orca-build .
+usage: orca-build [-h] [--clean] [--gc] [--output OUTPUT] [--verbose]
+                  [--build-arg NAME=value] [-t TAGS]
+                  ctx
+
+Build an OCI image from a Dockerfile context. Rootless containers are also
+supported out-of-the-box.
+
+positional arguments:
+  ctx                   Build context which is used when referencing host
+                        files. Files outside the build context cannot be
+                        accessed by the build script.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --clean               Remove all intermediate image tags after successful
+                        build.
+  --gc                  Run a final garbage collection on output image.
+  --output OUTPUT       Path of OCI image to output to (if unspecified, a new
+                        image is created in /tmp).
+  --verbose             Output debugging information.
+  --build-arg NAME=value
+                        Build-time arguments used in conjunction with ARG.
+  -t TAGS, --tag TAGS   Tag(s) of the output image (by default, randomly
+                        generated).
+```
+
+Here's an example session of building a standard `Dockerfile`:
+
+```
+% orca-build -t some-tag .
 orca-build[INFO] BUILD[1 of 2]: from ['opensuse/amd64:42.2'] [json=False]
 orca-build[INFO] Created new image for build: /tmp/orca-build.r2xp0v8h
   ---> [skopeo]
@@ -55,6 +84,9 @@ HOME_URL="https://www.opensuse.org/"
   ---> [umoci]
   <--- [umoci]
 orca-build[INFO] BUILD: finished
+  ---> [umoci]
+  <--- [umoci]
+orca-build[INFO] BUILD: created tags ['some-tag']
 ```
 
 ### Installation ###
