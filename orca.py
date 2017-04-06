@@ -233,21 +233,28 @@ class Builder(object):
 		path = os_path_clean(path)
 		return path
 
-	def __init__(self, root, script="Dockerfile"):
+	def __init__(self, root, build_args=None, script="Dockerfile"):
 		self.root = root
+
+		# Internal tags and image information.
 		self.image_path = None
 		self.our_tags = []
 		self.source_tag = None
 		self.destination_tag = None
 
+		# Instruction metadata.
+		self.default_shell = ["/bin/sh", "-c"]
+		self.build_args = build_args
+		if self.build_args is None:
+			self.build_args = {}
+
+		# The actual script.
 		with open(self.safepath(script)) as f:
 			contents = f.read()
 			self.script = DockerfileParser(contents).parse()
 			self.script_hash = hash_digest("sha256", contents) + "-dest"
 
-		# TODO: Implement SHELL support.
-		self.default_shell = ["/bin/sh", "-c"]
-
+		# Tool paths.
 		# TODO: Make these configurable and absolute paths.
 		self.skopeo = "skopeo"
 		self.umoci = "umoci"
@@ -305,11 +312,20 @@ class Builder(object):
 		config_path = os_path_join(bundle_path, "config.json")
 		with open(config_path) as f:
 			config = json.load(f)
+
 		if not isjson:
 			args = self.default_shell + [" ".join(args)]
 		config["process"]["args"] = args
 		config["process"]["terminal"] = False # XXX: Currently terminal=true breaks because stdin is /dev/null.
 		config["root"]["readonly"] = False
+		# ARG doesn't persist in the image, so we have to set it here.
+		for name, value in self.build_args.items():
+			# ENV always overrides ARG.
+			if any(env.startswith(name + "=") for env in config["process"]["env"]):
+				debug("arg %s=%s overridden by already-set environment variable" % (name, value))
+				continue
+			config["process"]["env"].append("%s=%s" % (name, value))
+
 		with open(config_path, "w") as f:
 			json.dump(config, f)
 
@@ -455,9 +471,20 @@ class Builder(object):
 		self.umoci_config(*env_args)
 
 	def _dispatch_arg(self, *args, isjson=False):
+		if len(args) != 1:
+			raise DockerfileFormatError("ARG can only have one argument.")
 		if isjson:
 			raise DockerfileFormatError("ARG doesn't support JSON arguments.")
-		warn("ARG is not yet implemented")
+
+		# ARG doesn't persist in the image.
+		arg = args[0]
+		if "=" not in arg:
+			# It's not clear what Docker does here when --build-arg hasn't been
+			# used either. It looks like they just ignore this case?
+			return
+		name, value = arg.split("=", maxsplit=1)
+		if name not in self.build_args:
+			self.build_args[name] = value
 
 	def _dispatch_shell(self, *args, isjson=False):
 		if not isjson:
@@ -504,12 +531,23 @@ def main(ctx, config):
 	if not os.path.exists(ctx):
 		fatal("Context %s doesn't exist." % (ctx,))
 
-	builder = Builder(ctx)
+	builder = Builder(ctx, build_args=config.build_args)
 	builder.build()
 
 if __name__ == "__main__":
 	def __wrapped_main__():
+		class BuildArgsAction(argparse.Action):
+			def __call__(self, parser, namespace, argument, option_string):
+				if "=" not in argument:
+					parser.error("--build-arg requires arguments of format NAME=value")
+
+				name, value = argument.split("=", maxsplit=1)
+				if getattr(namespace, self.dest, None) is None:
+					setattr(namespace, self.dest, {})
+				getattr(namespace, self.dest)[name] = value
+
 		parser = argparse.ArgumentParser(description="Build an OCI image from a Dockerfile context. Rootless containers are also supported out-of-the-box.")
+		parser.add_argument("--build-arg", metavar="NAME=value", dest="build_args", action=BuildArgsAction, help="Build-time arguments used in conjunction with ARG.")
 		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
 		parser.add_argument("ctx", nargs=1, help="Build context which is used when referencing host files. Files outside the build context cannot be accessed by the build script.")
 
