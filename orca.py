@@ -243,6 +243,9 @@ class Builder(object):
 			self.script = DockerfileParser(contents).parse()
 			self.script_hash = hash_digest("sha256", contents) + "-dest"
 
+		# TODO: Implement SHELL support.
+		self.default_shell = ["/bin/sh", "-c"]
+
 		# TODO: Make these configurable and absolute paths.
 		self.skopeo = "skopeo"
 		self.umoci = "umoci"
@@ -300,6 +303,8 @@ class Builder(object):
 		config_path = os_path_join(bundle_path, "config.json")
 		with open(config_path) as f:
 			config = json.load(f)
+		if not isjson:
+			args = self.default_shell + [" ".join(args)]
 		config["process"]["args"] = args
 		config["process"]["terminal"] = False # XXX: Currently terminal=true breaks because stdin is /dev/null.
 		config["root"]["readonly"] = False
@@ -318,11 +323,36 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
+	def _dispatch_entrypoint(self, *args, isjson=False):
+		# The interactions with CMD and ENTRYPOINT are quite complicated
+		# because of backwards compatibility. Unfortuately that means that it's
+		# quite hard to emulate certain cases (specifically the shell form of
+		# ENTRYPOINT). Thus we emit a warning.
+		# https://docs.docker.com/v1.13/engine/reference/builder/#understand-how-cmd-and-entrypoint-interact
+		if not isjson:
+			warn("Using ENTRYPOINT in the shell form is not a good idea. Orca can't emulate some of the Docker semantics at the moment. Consider switching to the JSON form.")
+
+		# Decide whether we need to clear or change the entrypoint.
+		if len(args) == 0:
+			entrypoint_args = ["--clear=config.entrypoint"]
+		else:
+			if not isjson:
+				args = self.default_shell + [" ".join(args)]
+			entrypoint_args = ["--config.entrypoint="+arg for arg in args]
+		self.umoci_config(*entrypoint_args)
+
 	def _dispatch_cmd(self, *args, isjson=False):
+		# Same logic as ENTRYPOINT.
+		# https://docs.docker.com/v1.13/engine/reference/builder/#understand-how-cmd-and-entrypoint-interact
+		if not isjson:
+			warn("Using CMD in the shell form is not a good idea. Orca can't emulate some of the Docker semantics at the moment. Consider switching to the JSON form.")
+
 		# Decide whether we need to clear or change the cmd.
 		if len(args) == 0:
 			cmd_args = ["--clear=config.cmd"]
 		else:
+			if not isjson:
+				args = self.default_shell + [" ".join(args)]
 			cmd_args = ["--config.cmd="+arg for arg in args]
 		self.umoci_config(*cmd_args)
 
@@ -388,14 +418,6 @@ class Builder(object):
 		warn("ADD implementation doesn't support {decompression,remote,chown} at the moment.")
 		return self._dispatch_copy(self, *args, isjson=False)
 
-	def _dispatch_entrypoint(self, *args, isjson=False):
-		# Decide whether we need to clear or change the entrypoint.
-		if len(args) == 0:
-			entrypoint_args = ["--clear=config.entrypoint"]
-		else:
-			entrypoint_args = ["--config.entrypoint="+arg for arg in args]
-		self.umoci_config(*entrypoint_args)
-
 	def _dispatch_volume(self, *args, isjson=False):
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing volumes from a Dockerfile.
@@ -435,8 +457,7 @@ class Builder(object):
 	def _dispatch_shell(self, *args, isjson=False):
 		if not isjson:
 			raise DockerfileFormatError("SHELL only supports JSON arguments.")
-		# This could be supported.
-		warn("SHELL is not yet implemented")
+		self.default_shell = list(args)
 
 	def _dispatch_stopsignal(self, *args, isjson=False):
 		if len(args) != 1:
