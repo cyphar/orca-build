@@ -504,7 +504,7 @@ class Builder(object):
 	def _dispatch_healthcheck(self, *args, isjson=False):
 		warn("HEALTHCHECK is not supported by OCI. Ignoring.")
 
-	def build(self):
+	def build(self, tags=None):
 		for idx, step in enumerate(self.script):
 			cmd = step.cmd.lower()
 			args = step.args
@@ -526,13 +526,23 @@ class Builder(object):
 
 		info("BUILD: finished")
 
+		# Create the output tag.
+		if tags is not None:
+			oci_source = "%s:%s" % (self.image_path, self.source_tag)
+			for tag in tags:
+				os_system(self.umoci, "tag", "--image="+oci_source, tag)
+		else:
+			tags = [self.source_tag]
+
+		info("BUILD: created tags %r" % (tags,))
+
 
 def main(ctx, config):
 	if not os.path.exists(ctx):
 		fatal("Context %s doesn't exist." % (ctx,))
 
 	builder = Builder(ctx, build_args=config.build_args)
-	builder.build()
+	builder.build(tags=config.tags)
 
 if __name__ == "__main__":
 	def __wrapped_main__():
@@ -549,6 +559,7 @@ if __name__ == "__main__":
 		parser = argparse.ArgumentParser(description="Build an OCI image from a Dockerfile context. Rootless containers are also supported out-of-the-box.")
 		parser.add_argument("--build-arg", metavar="NAME=value", dest="build_args", action=BuildArgsAction, help="Build-time arguments used in conjunction with ARG.")
 		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
+		parser.add_argument("-t", "--tag", dest="tags", action="append", default=None, help="Tag(s) of the output image (by default, randomly generated).")
 		parser.add_argument("ctx", nargs=1, help="Build context which is used when referencing host files. Files outside the build context cannot be accessed by the build script.")
 
 		config = parser.parse_args()
