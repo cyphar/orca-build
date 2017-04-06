@@ -151,9 +151,10 @@ class DockerfileParser(object):
 		self.data = data
 
 	def parse(self):
-		# TODO: This is really dodgy at the moment (we should figure out how to
-		#       parse JSON properly). First clean up the comments and line
-		#       continuations and then split up the arguments and commands.
+		# First clean up the comments and line continuations and then split up
+		# the arguments and commands. While this isn't as "full featured" as
+		# Docker's quite complicated Dockerfile parsing code, it should work
+		# fine in most cases.
 		self.data = re.sub(r"^#.*$", r"", self.data, flags=re.MULTILINE)
 		self.data = re.sub(r"\\\n", r" ", self.data, flags=re.MULTILINE)
 
@@ -163,12 +164,28 @@ class DockerfileParser(object):
 			if not line.strip():
 				continue
 
-			cmd, args = line.split(" ", maxsplit=1)
-			args = shlex.split(args)
+			cmd, rest = line.split(" ", maxsplit=1)
+
+			# Try to parse it as JSON and fall back to regular splitting.
+			# NOTE: This doesn't handle the fact that some commands don't
+			#       accept JSON arguments. We can handle that later though.
+			#       Also I'm not sure how we should handle --style arguments to
+			#       commands.
+			args = None
+			try:
+				args = json.loads(rest.strip())
+			except json.decoder.JSONDecodeError:
+				pass
+
+			# Commands only accept JSON lists.
+			isjson = isinstance(args, list)
+			if not isjson:
+				args = shlex.split(rest)
 
 			steps.append(attrdict({
 				"cmd": cmd,
 				"args": args,
+				"isjson": isjson,
 			}))
 
 		# Make sure there's at least one step.
@@ -223,7 +240,7 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
-	def _dispatch_from(self, *args):
+	def _dispatch_from(self, *args, isjson=False):
 		if len(args) != 1:
 			print("[*]     --> Invalid FROM format, can only have one argument -- FROM %r" % (args,))
 		docker_source = "docker://%s" % (args[0],)
@@ -251,7 +268,7 @@ class Builder(object):
 			os_system(self.umoci, "init", "--layout="+self.image_path)
 			os_system(self.umoci, "new", "--image=%s:%s" % (self.image_path, self.source_tag))
 
-	def _dispatch_run(self, *args):
+	def _dispatch_run(self, *args, isjson=False):
 		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
 		print("[+]     --> Created new bundle for build: %s" % (bundle_path,))
 
@@ -282,7 +299,7 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
-	def _dispatch_cmd(self, *args):
+	def _dispatch_cmd(self, *args, isjson=False):
 		# Decide whether we need to clear or change the cmd.
 		if len(args) == 0:
 			cmd_args = ["--clear=config.cmd"]
@@ -290,24 +307,24 @@ class Builder(object):
 			cmd_args = ["--config.cmd="+arg for arg in args]
 		self.umoci_config(*cmd_args)
 
-	def _dispatch_label(self, *args):
+	def _dispatch_label(self, *args, isjson=False):
 		# Generate args.
 		label_args = ["--config.label="+arg for arg in args]
 		self.umoci_config(*label_args)
 
-	def _dispatch_maintainer(self, *args):
+	def _dispatch_maintainer(self, *args, isjson=False):
 		# Generate args.
 		author = " ".join(args)
 		maintainer_args = ["--author="+author, "--config.label=maintainer="+author]
 		self.umoci_config(*maintainer_args)
 
-	def _dispatch_expose(self, *args):
+	def _dispatch_expose(self, *args, isjson=False):
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing exposedports from a Dockerfile.
 		expose_args = ["--config.exposedports="+arg for arg in args]
 		self.umoci_config(*expose_args)
 
-	def _dispatch_copy(self, *args):
+	def _dispatch_copy(self, *args, isjson=False):
 		if len(args) != 2:
 			print("[*]     --> Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
 			raise RuntimeError("Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
@@ -342,11 +359,11 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
-	def _dispatch_add(self, *args):
+	def _dispatch_add(self, *args, isjson=False):
 		print("[!]     --> ADD implementation doesn't implement decompression, remote downloads or chown root:root at the moment.")
-		return self._dispatch_copy(self, *args)
+		return self._dispatch_copy(self, *args, isjson=False)
 
-	def _dispatch_entrypoint(self, *args):
+	def _dispatch_entrypoint(self, *args, isjson=False):
 		# Decide whether we need to clear or change the entrypoint.
 		if len(args) == 0:
 			entrypoint_args = ["--clear=config.entrypoint"]
@@ -354,13 +371,13 @@ class Builder(object):
 			entrypoint_args = ["--config.entrypoint="+arg for arg in args]
 		self.umoci_config(*entrypoint_args)
 
-	def _dispatch_volume(self, *args):
+	def _dispatch_volume(self, *args, isjson=False):
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing volumes from a Dockerfile.
 		volume_args = ["--config.volume="+arg for arg in args]
 		self.umoci_config(*volume_args)
 
-	def _dispatch_user(self, *args):
+	def _dispatch_user(self, *args, isjson=False):
 		if len(args) != 1:
 			print("[*]     --> Invalid USER format, can only have one argument -- USER %r" % (args,))
 			raise RuntimeError("Invalid USER format, can only have one argument -- USER %r" % (args,))
@@ -369,7 +386,7 @@ class Builder(object):
 		user_args = ["--config.user="+args[0]]
 		self.umoci_config(*user_args)
 
-	def _dispatch_workdir(self, *args):
+	def _dispatch_workdir(self, *args, isjson=False):
 		if len(args) != 1:
 			print("[*]     --> Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
 			raise RuntimeError("Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
@@ -378,35 +395,36 @@ class Builder(object):
 		workdir_args = ["--config.workdir="+args[0]]
 		self.umoci_config(*workdir_args)
 
-	def _dispatch_env(self, *args):
+	def _dispatch_env(self, *args, isjson=False):
 		print("[*]     --> TODO. NOT IMPLEMENTED.")
 
-	def _dispatch_arg(self, *args):
+	def _dispatch_arg(self, *args, isjson=False):
 		print("[*]     --> TODO. NOT IMPLEMENTED.")
 
-	def _dispatch_stopsignal(self, *args):
+	def _dispatch_stopsignal(self, *args, isjson=False):
 		print("[*]     --> TODO. NOT IMPLEMENTED. REQUIRES NEWER OCI IMAGESPEC SUPPORT.")
 
-	def _dispatch_onbuild(self, *args):
+	def _dispatch_onbuild(self, *args, isjson=False):
 		print("[-]     --> ONBUILD is not supported by OCI.")
 
-	def _dispatch_shell(self, *args):
+	def _dispatch_shell(self, *args, isjson=False):
 		print("[-]     --> SHELL is not supported by OCI.")
 
-	def _dispatch_healthcheck(self, *args):
+	def _dispatch_healthcheck(self, *args, isjson=False):
 		print("[-]     --> HEALTHCHECK is not supported by OCI.")
 
 	def build(self):
 		for step in self.script:
 			cmd = step.cmd.lower()
 			args = step.args
+			isjson = step.isjson
 
-			print("[+] Build step: %s %r" % (cmd, args))
+			print("[+] Build step: %s %r [json=%r]" % (cmd, args, isjson))
 
 			# Dispatch to method.
 			fn = "_dispatch_%s" % (cmd,)
 			if hasattr(self, fn):
-				getattr(self, fn)(*args)
+				getattr(self, fn)(*args, isjson=step.isjson)
 			else:
 				print("[-] unknown build command %s" % (cmd,))
 				raise RuntimeError("unknown build command %s" % (cmd,))
