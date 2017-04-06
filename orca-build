@@ -268,14 +268,17 @@ class Builder(object):
 		path = os_path_clean(path)
 		return path
 
-	def __init__(self, root, build_args=None, script="Dockerfile"):
+	def __init__(self, root, build_args=None, script="Dockerfile", rootless=False):
 		self.root = root
+		self.rootless = rootless
 
 		# Internal tags and image information.
 		self.image_path = None
 		self.our_tags = []
 		self.source_tag = None
 		self.destination_tag = None
+		self.runc_root = tempfile.mkdtemp(prefix="orca-runcroot.")
+		debug("Created new runC root for build: %s" % (self.runc_root,))
 
 		# Instruction metadata.
 		self.default_shell = ["/bin/sh", "-c"]
@@ -311,8 +314,11 @@ class Builder(object):
 		debug("Created new bundle for build: %s" % (bundle_path,))
 
 		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		# TODO: Add --rootless support.
-		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
+		unpack_args = ["unpack"]
+		if self.rootless:
+			unpack_args += ["--rootless"]
+		unpack_args += ["--image="+oci_source, bundle_path]
+		os_system(self.umoci, *unpack_args)
 
 		return bundle_path
 
@@ -412,7 +418,7 @@ class Builder(object):
 
 		# Run the container.
 		ctr_id = "orca-build-" + generate_id()
-		os_system(self.runc, "run", "--bundle="+bundle_path, ctr_id)
+		os_system(self.runc, "--root="+self.runc_root, "run", "--bundle="+bundle_path, ctr_id)
 
 		# Repack the damn thing.
 		self.umoci_repack_bundle(bundle_path)
@@ -633,7 +639,7 @@ def main(ctx, config):
 	if not os.path.exists(ctx):
 		fatal("Context %s doesn't exist." % (ctx,))
 
-	builder = Builder(ctx, build_args=config.build_args)
+	builder = Builder(ctx, build_args=config.build_args, rootless=config.rootless)
 	builder.build(output=config.output, tags=config.tags, clean=config.clean, gc=config.gc)
 
 if __name__ == "__main__":
@@ -654,6 +660,7 @@ if __name__ == "__main__":
 		parser.add_argument("--gc", action="store_true", help="Run a final garbage collection on output image.")
 		parser.add_argument("--output", default=None, help="Path of OCI image to output to (if unspecified, a new image is created in /tmp).")
 		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
+		parser.add_argument("--rootless", action="store_const", const=True, default=False, help="Enable rootless containers mode.")
 		# Docker compat.
 		parser.add_argument("--build-arg", metavar="NAME=value", dest="build_args", action=BuildArgsAction, help="Build-time arguments used in conjunction with ARG.")
 		parser.add_argument("-t", "--tag", dest="tags", action="append", default=None, help="Tag(s) of the output image (by default, randomly generated).")
