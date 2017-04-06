@@ -16,6 +16,60 @@ other.
 
 [hw]: https://hackweek.suse.com/15/projects/orca-build-oci-images-from-dockerfiles
 
+### Usage ###
+
+The usage is kinda like `docker build`. You provide it a build context that
+contains a `Dockerfile` and `orca` does the rest. I plan to add support for
+some more of the `docker build` flags in the near future, but at the moment it
+works pretty well.
+
+```
+% orca .
+orca[INFO] BUILD[1 of 2]: from ['opensuse/amd64:42.2'] [json=False]
+orca[INFO] Created new image for build: /tmp/orca-build.r2xp0v8h
+  ---> [skopeo]
+Getting image source signatures
+Copying blob sha256:ed6542b73fb1330e3eee8294a805b9a231e30b3efa71390f938ce89f210db860
+ 47.09 MB / 47.09 MB [=========================================================]
+Copying config sha256:56fae18e2688b7d7caf2dd39960f0e6fda4383c174926e2ee47128f29de066cf
+ 0 B / 805 B [-----------------------------------------------------------------]
+Writing manifest to image destination
+Storing signatures
+  <--- [skopeo]
+orca[INFO] BUILD[2 of 2]: run ['echo', 'Hello orca!', '&&', 'cat', '/etc/os-release'] [json=False]
+  ---> [umoci]
+  <--- [umoci]
+  ---> [runc]
+Hello orca!
+NAME="openSUSE Leap"
+VERSION="42.2"
+ID=opensuse
+ID_LIKE="suse"
+VERSION_ID="42.2"
+PRETTY_NAME="openSUSE Leap 42.2"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:opensuse:leap:42.2"
+BUG_REPORT_URL="https://bugs.opensuse.org"
+HOME_URL="https://www.opensuse.org/"
+  <--- [runc]
+  ---> [umoci]
+  <--- [umoci]
+orca[INFO] BUILD: finished
+```
+
+### Installation ###
+
+I don't know how to do the whole "installation" thing with Python, so here's
+how you install `orca`. It only depends on the standard library (and having the
+above tools in your `$PATH`):
+
+```
+% sudo install -m0755 -D orca.py /usr/bin/orca
+```
+
+I've only tested it with Python 3.6, but it should work with most modern Python
+3 versions.
+
 ### License ###
 
 `orca` is licensed under the terms of the GPLv3 (or later).
