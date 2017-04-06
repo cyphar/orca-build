@@ -16,12 +16,14 @@
 
 import os
 import re
+import sys
 import json
 import shlex
 import random
 import shutil
 import string
 import hashlib
+import logging
 import argparse
 import tempfile
 import subprocess
@@ -30,6 +32,13 @@ class attrdict(object):
 	"Dumb implementation of attrdict."
 	def __init__(self, *args, **kwargs):
 		self.__dict__ = dict(*args, **kwargs)
+
+
+class SubprocessError(Exception):
+	pass
+
+class DockerfileFormatError(Exception):
+	pass
 
 
 def os_path_join(*parts):
@@ -127,11 +136,21 @@ def os_system(*args):
 	Execute a command in the foreground, waiting until the command exits.
 	Standard I/O is inherited from this process.
 	"""
-	print("[*]     --> Executing %s." % (args,))
+	debug("Executing %s." % (args,))
+	print("  ---> [%s]" % (args[0],))
 	ret = subprocess.call(args, stdin=subprocess.DEVNULL)
+	print("  <--- [%s]" % (args[0],))
 	if ret != 0:
-		print("[!]     --> %s failed with error code %d" % (args, ret))
-		raise RuntimeError("%s failed with error code %d" % (args, ret))
+		raise SubprocessError("%s failed with error code %d" % (" ".join(args), ret))
+
+# Wrappers/aliases for logging functions.
+debug = logging.debug
+info = logging.info
+warn = logging.warn
+
+def fatal(*args):
+	logging.fatal(*args)
+	sys.exit(1)
 
 def generate_id(size=32, chars=string.ascii_uppercase + string.ascii_lowercase + string.digits):
 	return ''.join(random.choice(chars) for _ in range(size))
@@ -190,13 +209,11 @@ class DockerfileParser(object):
 
 		# Make sure there's at least one step.
 		if len(steps) == 0:
-			print("[-] Dockerfile contained no instructions.")
-			raise ValueError("Dockerfile contained no instructions.")
+			raise DockerfileFormatError("Dockerfile contained no instructions.")
 
 		# The first step must be FROM.
 		if steps[0].cmd.lower() != "from":
-			print("[-] Dockerfiles must start with FROM.")
-			raise ValueError("Dockerfiles must start with FROM.")
+			raise DockerfileFormatError("Dockerfiles must start with FROM.")
 
 		# Return the steps.
 		return steps
@@ -242,12 +259,12 @@ class Builder(object):
 
 	def _dispatch_from(self, *args, isjson=False):
 		if len(args) != 1:
-			print("[*]     --> Invalid FROM format, can only have one argument -- FROM %r" % (args,))
+			raise DockerfileFormatError("FROM can only have one argument.")
 		docker_source = "docker://%s" % (args[0],)
 
 		if self.image_path is None:
 			self.image_path = tempfile.mkdtemp(prefix="orca-build.")
-			print("[+]     --> Created new image for build: %s" % (self.image_path,))
+			info("Created new image for build: %s" % (self.image_path,))
 
 		if self.source_tag is None:
 			self.source_tag = hash_digest("sha256", docker_source) + "-src"
@@ -270,7 +287,7 @@ class Builder(object):
 
 	def _dispatch_run(self, *args, isjson=False):
 		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
-		print("[+]     --> Created new bundle for build: %s" % (bundle_path,))
+		debug("Created new bundle for build: %s" % (bundle_path,))
 
 		oci_source = "%s:%s" % (self.image_path, self.source_tag)
 		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
@@ -326,11 +343,10 @@ class Builder(object):
 
 	def _dispatch_copy(self, *args, isjson=False):
 		if len(args) != 2:
-			print("[*]     --> Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
-			raise RuntimeError("Invalid COPY format, can only have two arguments -- COPY %r" % (args,))
+			raise DockerfileFormatError("COPY can only have two arguments.")
 
 		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
-		print("[+]     --> Created new bundle for build: %s" % (bundle_path,))
+		debug("Created new bundle for build: %s" % (bundle_path,))
 
 		oci_source = "%s:%s" % (self.image_path, self.source_tag)
 		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
@@ -342,7 +358,7 @@ class Builder(object):
 		#       of FollowSymlinkInScope.
 		src = self.safepath(args[0])
 		dst = os_path_clean(os_path_join(bundle_path, "rootfs", os_path_clean(args[1])))
-		print("[*]     --> %s -> %s" % (src, dst))
+		debug("recursive copy %s -> %s" % (src, dst))
 		if os.path.isdir(dst):
 			# This probably isn't correct.
 			dst = os_path_join(dst, os.path.basename(src))
@@ -360,7 +376,7 @@ class Builder(object):
 		self.source_tag = self.destination_tag
 
 	def _dispatch_add(self, *args, isjson=False):
-		print("[!]     --> ADD implementation doesn't implement decompression, remote downloads or chown root:root at the moment.")
+		warn("ADD implementation doesn't support {decompression,remote,chown} at the moment.")
 		return self._dispatch_copy(self, *args, isjson=False)
 
 	def _dispatch_entrypoint(self, *args, isjson=False):
@@ -379,8 +395,7 @@ class Builder(object):
 
 	def _dispatch_user(self, *args, isjson=False):
 		if len(args) != 1:
-			print("[*]     --> Invalid USER format, can only have one argument -- USER %r" % (args,))
-			raise RuntimeError("Invalid USER format, can only have one argument -- USER %r" % (args,))
+			raise DockerfileFormatError("USER can only have one argument.")
 
 		# Generate args.
 		user_args = ["--config.user="+args[0]]
@@ -388,53 +403,57 @@ class Builder(object):
 
 	def _dispatch_workdir(self, *args, isjson=False):
 		if len(args) != 1:
-			print("[*]     --> Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
-			raise RuntimeError("Invalid WORKDIR format, can only have one argument -- WORKDIR %r" % (args,))
+			raise DockerfileFormatError("WORKDIR can only have one argument.")
 
 		# Generate args.
 		workdir_args = ["--config.workdir="+args[0]]
 		self.umoci_config(*workdir_args)
 
 	def _dispatch_env(self, *args, isjson=False):
-		print("[*]     --> TODO. NOT IMPLEMENTED.")
+		warn("ENV is not yet implemented")
 
 	def _dispatch_arg(self, *args, isjson=False):
-		print("[*]     --> TODO. NOT IMPLEMENTED.")
-
-	def _dispatch_stopsignal(self, *args, isjson=False):
-		print("[*]     --> TODO. NOT IMPLEMENTED. REQUIRES NEWER OCI IMAGESPEC SUPPORT.")
-
-	def _dispatch_onbuild(self, *args, isjson=False):
-		print("[-]     --> ONBUILD is not supported by OCI.")
+		warn("ARG is not yet implemented")
 
 	def _dispatch_shell(self, *args, isjson=False):
-		print("[-]     --> SHELL is not supported by OCI.")
+		# This could be supported.
+		warn("SHELL is not yet implemented")
+
+	def _dispatch_stopsignal(self, *args, isjson=False):
+		warn("STOPSIGNAL is not yet implemented (requires newer OCI imagespec)")
+
+	def _dispatch_onbuild(self, *args, isjson=False):
+		warn("ONBUILD is not supported by OCI. Ignoring.")
 
 	def _dispatch_healthcheck(self, *args, isjson=False):
-		print("[-]     --> HEALTHCHECK is not supported by OCI.")
+		warn("HEALTHCHECK is not supported by OCI. Ignoring.")
 
 	def build(self):
-		for step in self.script:
+		for idx, step in enumerate(self.script):
 			cmd = step.cmd.lower()
 			args = step.args
 			isjson = step.isjson
 
-			print("[+] Build step: %s %r [json=%r]" % (cmd, args, isjson))
+			info("BUILD[%d of %d]: %s %r [json=%r]" % (idx+1, len(self.script), cmd, args, isjson))
 
 			# Dispatch to method.
 			fn = "_dispatch_%s" % (cmd,)
-			if hasattr(self, fn):
-				getattr(self, fn)(*args, isjson=step.isjson)
-			else:
-				print("[-] unknown build command %s" % (cmd,))
-				raise RuntimeError("unknown build command %s" % (cmd,))
+			try:
+				if hasattr(self, fn):
+					getattr(self, fn)(*args, isjson=step.isjson)
+				else:
+					raise DockerfileFormatError("Unknown build command %s" % (cmd,))
+			except DockerfileFormatError as e:
+				fatal("Dockerfile format error: %s" % (e.args[0],))
+			except SubprocessError as e:
+				fatal("Error executing subprocess: %s" % (e.args[0],))
 
-		print("[+] Build finished.")
+		info("BUILD: finished")
 
 
 def main(ctx, config):
 	if not os.path.exists(ctx):
-		print("[-] Context %s doesn't exist." % (ctx,))
+		fatal("Context %s doesn't exist." % (ctx,))
 
 	builder = Builder(ctx)
 	builder.build()
@@ -447,6 +466,7 @@ if __name__ == "__main__":
 		config = parser.parse_args()
 		ctx = config.ctx[0]
 
+		logging.basicConfig(format="orca[%(levelname)s] %(message)s", level=logging.INFO)
 		main(ctx, config)
 
 	__wrapped_main__()
