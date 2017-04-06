@@ -260,6 +260,8 @@ class Builder(object):
 	def _dispatch_from(self, *args, isjson=False):
 		if len(args) != 1:
 			raise DockerfileFormatError("FROM can only have one argument.")
+		if isjson:
+			raise DockerfileFormatError("FROM doesn't support JSON arguments.")
 		docker_source = "docker://%s" % (args[0],)
 
 		if self.image_path is None:
@@ -325,17 +327,23 @@ class Builder(object):
 		self.umoci_config(*cmd_args)
 
 	def _dispatch_label(self, *args, isjson=False):
+		if isjson:
+			raise DockerfileFormatError("LABEL doesn't support JSON arguments.")
 		# Generate args.
 		label_args = ["--config.label="+arg for arg in args]
 		self.umoci_config(*label_args)
 
 	def _dispatch_maintainer(self, *args, isjson=False):
+		if isjson:
+			raise DockerfileFormatError("MAINTAINER doesn't support JSON arguments.")
 		# Generate args.
 		author = " ".join(args)
 		maintainer_args = ["--author="+author, "--config.label=maintainer="+author]
 		self.umoci_config(*maintainer_args)
 
 	def _dispatch_expose(self, *args, isjson=False):
+		if isjson:
+			raise DockerfileFormatError("EXPOSE doesn't support JSON arguments.")
 		# Generate args.
 		# NOTE: There's no way AFAIK of clearing exposedports from a Dockerfile.
 		expose_args = ["--config.exposedports="+arg for arg in args]
@@ -343,6 +351,7 @@ class Builder(object):
 
 	def _dispatch_copy(self, *args, isjson=False):
 		if len(args) != 2:
+			# TODO: This isn't true and needs to be extended.
 			raise DockerfileFormatError("COPY can only have two arguments.")
 
 		bundle_path = tempfile.mkdtemp(prefix="orca-build-bundle.")
@@ -396,6 +405,8 @@ class Builder(object):
 	def _dispatch_user(self, *args, isjson=False):
 		if len(args) != 1:
 			raise DockerfileFormatError("USER can only have one argument.")
+		if isjson:
+			raise DockerfileFormatError("USER doesn't support JSON arguments.")
 
 		# Generate args.
 		user_args = ["--config.user="+args[0]]
@@ -404,22 +415,34 @@ class Builder(object):
 	def _dispatch_workdir(self, *args, isjson=False):
 		if len(args) != 1:
 			raise DockerfileFormatError("WORKDIR can only have one argument.")
+		if isjson:
+			raise DockerfileFormatError("WORKDIR doesn't support JSON arguments.")
 
 		# Generate args.
 		workdir_args = ["--config.workdir="+args[0]]
 		self.umoci_config(*workdir_args)
 
 	def _dispatch_env(self, *args, isjson=False):
+		if isjson:
+			raise DockerfileFormatError("ENV doesn't support JSON arguments.")
 		warn("ENV is not yet implemented")
 
 	def _dispatch_arg(self, *args, isjson=False):
+		if isjson:
+			raise DockerfileFormatError("ARG doesn't support JSON arguments.")
 		warn("ARG is not yet implemented")
 
 	def _dispatch_shell(self, *args, isjson=False):
+		if not isjson:
+			raise DockerfileFormatError("SHELL only supports JSON arguments.")
 		# This could be supported.
 		warn("SHELL is not yet implemented")
 
 	def _dispatch_stopsignal(self, *args, isjson=False):
+		if len(args) != 1:
+			raise DockerfileFormatError("STOPSIGNAL can only have one argument.")
+		if isjson:
+			raise DockerfileFormatError("STOPSIGNAL doesn't support JSON arguments.")
 		warn("STOPSIGNAL is not yet implemented (requires newer OCI imagespec)")
 
 	def _dispatch_onbuild(self, *args, isjson=False):
