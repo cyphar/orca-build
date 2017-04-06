@@ -184,6 +184,8 @@ class DockerfileParser(object):
 				continue
 
 			cmd, rest = line.split(" ", maxsplit=1)
+			if "$" in rest:
+				warn("Orca currently doesn't implement shell substitution.")
 
 			# Try to parse it as JSON and fall back to regular splitting.
 			# NOTE: This doesn't handle the fact that some commands don't
@@ -447,7 +449,10 @@ class Builder(object):
 	def _dispatch_env(self, *args, isjson=False):
 		if isjson:
 			raise DockerfileFormatError("ENV doesn't support JSON arguments.")
-		warn("ENV is not yet implemented")
+		# Generate args.
+		# NOTE: There's no way AFAIK of clearing environment variables from a Dockerfile.
+		env_args = ["--config.env="+arg for arg in args]
+		self.umoci_config(*env_args)
 
 	def _dispatch_arg(self, *args, isjson=False):
 		if isjson:
