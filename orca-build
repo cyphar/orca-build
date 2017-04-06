@@ -269,6 +269,10 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
+	def _generate_destination(self):
+		self.destination_tag = hash_digest("sha256", self.script_hash + str(self.destination_tag) + "-next") + "-dest"
+		self.our_tags.append(self.destination_tag)
+
 	def _dispatch_from(self, *args, isjson=False):
 		if len(args) != 1:
 			raise DockerfileFormatError("FROM can only have one argument.")
@@ -283,10 +287,8 @@ class Builder(object):
 		if self.source_tag is None:
 			self.source_tag = hash_digest("sha256", docker_source) + "-src"
 			self.our_tags.append(self.source_tag)
-
-		if self.destination_tag is None:
-			self.destination_tag = hash_digest("sha256", self.script_hash) + "-dest"
-			self.our_tags.append(self.destination_tag)
+		else:
+			raise RuntimeError("source_tag is not None in FROM: %s" % (self.source_tag,))
 
 		if docker_source != "docker://scratch":
 			# TODO: At the moment we only really support importing from a Docker
@@ -516,6 +518,8 @@ class Builder(object):
 			fn = "_dispatch_%s" % (cmd,)
 			try:
 				if hasattr(self, fn):
+					# Do this before each step.
+					self._generate_destination()
 					getattr(self, fn)(*args, isjson=step.isjson)
 				else:
 					raise DockerfileFormatError("Unknown build command %s" % (cmd,))
