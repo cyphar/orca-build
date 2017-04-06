@@ -28,6 +28,8 @@ import argparse
 import tempfile
 import subprocess
 
+VARIABLE_COMMANDS = {"add", "copy", "env", "expose", "label", "user", "workdir", "volume", "stopsignal"}
+
 class attrdict(object):
 	"Dumb implementation of attrdict."
 	def __init__(self, *args, **kwargs):
@@ -131,6 +133,41 @@ def os_path_clean(orig_path):
 
 	return path
 
+def expandvars(string, envs):
+	"""
+	Variable expansion implementation, and additionally implementing ${a:+a}
+	and ${a:-a} modifiers (which are required for Dockerfile support).
+	Currently this is implemented using regular expressions, so recursive shell
+	definitions won't be correctly handled.
+	"""
+
+	def replace(matches):
+		matches = [m for m in matches.groups() if m is not None]
+		if len(matches) != 1:
+			raise DockerfileFormatError("Unknown environment variable format: '%s'" % (matches,))
+
+		var, modifier = matches[0], None
+		if ":" in var:
+			var, modifier = var.split(":", maxsplit=1)
+			if len(modifier) == 0:
+				raise DockerfileFormatError("Environment variable modifier cannot be empty: %s" % (var,))
+			if modifier[0] not in {'+', '-'}:
+				raise DockerfileFormatError("Invalid environment variable modifier: '%s'" % (modifier,))
+
+		value = envs.get(var)
+		if modifier is not None:
+			mod, word = modifier[0], modifier[1:]
+			if mod == '+' and value is not None:
+				value = word
+			elif mod == '-' and value is None:
+				value = word
+
+		return value
+
+	# XXX: Variables are actually a context-free grammar, so using regular
+	#      expressions is wrong here. We'd need to parse things properly.
+	return re.sub(r"(?<!\\)\$(?:(\w+)|\{([^\}]+)\})", replace, string)
+
 def os_system(*args):
 	"""
 	Execute a command in the foreground, waiting until the command exits.
@@ -184,8 +221,6 @@ class DockerfileParser(object):
 				continue
 
 			cmd, rest = line.split(" ", maxsplit=1)
-			if "$" in rest:
-				warn("Orca currently doesn't implement shell substitution.")
 
 			# Try to parse it as JSON and fall back to regular splitting.
 			# NOTE: This doesn't handle the fact that some commands don't
@@ -517,9 +552,15 @@ class Builder(object):
 
 			info("BUILD[%d of %d]: %s %r [json=%r]" % (idx+1, len(self.script), cmd, args, isjson))
 
-			# Dispatch to method.
-			fn = "_dispatch_%s" % (cmd,)
 			try:
+				# Variable substitution.
+				if cmd in VARIABLE_COMMANDS | {"run", "shell"}:
+					# TODO: Implement the envs generation from config.json.
+					envs = self.build_args
+					args = [expandvars(arg, envs) for arg in args]
+
+				# Dispatch to method.
+				fn = "_dispatch_%s" % (cmd,)
 				if hasattr(self, fn):
 					# Do this before each step.
 					self._generate_destination()
