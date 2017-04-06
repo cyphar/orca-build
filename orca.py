@@ -510,12 +510,16 @@ def main(ctx, config):
 if __name__ == "__main__":
 	def __wrapped_main__():
 		parser = argparse.ArgumentParser(description="Build an OCI image from a Dockerfile context. Rootless containers are also supported out-of-the-box.")
+		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
 		parser.add_argument("ctx", nargs=1, help="Build context which is used when referencing host files. Files outside the build context cannot be accessed by the build script.")
 
 		config = parser.parse_args()
 		ctx = config.ctx[0]
 
-		logging.basicConfig(format="orca[%(levelname)s] %(message)s", level=logging.INFO)
+		level = logging.INFO
+		if config.verbose:
+			level = logging.DEBUG
+		logging.basicConfig(format="orca[%(levelname)s] %(message)s", level=level)
 		main(ctx, config)
 
 	__wrapped_main__()
