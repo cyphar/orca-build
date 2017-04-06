@@ -280,10 +280,6 @@ class Builder(object):
 			raise DockerfileFormatError("FROM doesn't support JSON arguments.")
 		docker_source = "docker://%s" % (args[0],)
 
-		if self.image_path is None:
-			self.image_path = tempfile.mkdtemp(prefix="orca-build.")
-			info("Created new image for build: %s" % (self.image_path,))
-
 		if self.source_tag is None:
 			self.source_tag = hash_digest("sha256", docker_source) + "-src"
 			self.our_tags.append(self.source_tag)
@@ -506,7 +502,14 @@ class Builder(object):
 	def _dispatch_healthcheck(self, *args, isjson=False):
 		warn("HEALTHCHECK is not supported by OCI. Ignoring.")
 
-	def build(self, clean=False, gc=False, tags=None, **_):
+	def build(self, output=None, tags=None, clean=False, gc=False, **_):
+		if output is None:
+			self.image_path = tempfile.mkdtemp(prefix="orca-build.")
+			info("Created new image for build: %s" % (self.image_path,))
+		else:
+			self.image_path = output
+			info("Using existing image for build: %s" % (self.image_path,))
+
 		for idx, step in enumerate(self.script):
 			cmd = step.cmd.lower()
 			args = step.args
@@ -559,7 +562,7 @@ def main(ctx, config):
 		fatal("Context %s doesn't exist." % (ctx,))
 
 	builder = Builder(ctx, build_args=config.build_args)
-	builder.build(clean=config.clean, gc=config.gc, tags=config.tags)
+	builder.build(output=config.output, tags=config.tags, clean=config.clean, gc=config.gc)
 
 if __name__ == "__main__":
 	def __wrapped_main__():
@@ -577,6 +580,7 @@ if __name__ == "__main__":
 		# Orca commands.
 		parser.add_argument("--clean", action="store_true", help="Remove all intermediate image tags after successful build.")
 		parser.add_argument("--gc", action="store_true", help="Run a final garbage collection on output image.")
+		parser.add_argument("--output", default=None, help="Path of OCI image to output to (if unspecified, a new image is created in /tmp).")
 		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
 		# Docker compat.
 		parser.add_argument("--build-arg", metavar="NAME=value", dest="build_args", action=BuildArgsAction, help="Build-time arguments used in conjunction with ARG.")
