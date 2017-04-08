@@ -304,6 +304,29 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
+	def umoci_unpack_bundle(self):
+		"Extracts the self.source_tag into a new bundle and returns the path."
+
+		bundle_path = tempfile.mkdtemp(prefix="orca-bundle.")
+		debug("Created new bundle for build: %s" % (bundle_path,))
+
+		oci_source = "%s:%s" % (self.image_path, self.source_tag)
+		# TODO: Add --rootless support.
+		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
+
+		return bundle_path
+
+	def umoci_repack_bundle(self, bundle_path):
+		"Repacks the given bundle into self.destination_tag and deletes it."
+
+		# Repack the image.
+		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
+		os_system(self.umoci, "repack", "--image="+oci_destination, bundle_path)
+		# TODO: Delete the bundle.
+
+		# The destination has become the ma^H^Hsource.
+		self.source_tag = self.destination_tag
+
 	def _generate_destination(self):
 		self.destination_tag = hash_digest("sha256", self.script_hash + str(self.destination_tag) + "-next") + "-dest"
 		self.our_tags.append(self.destination_tag)
@@ -333,19 +356,10 @@ class Builder(object):
 			os_system(self.umoci, "new", "--image=%s:%s" % (self.image_path, self.source_tag))
 
 	def _dispatch_run(self, *args, isjson=False):
-		bundle_path = tempfile.mkdtemp(prefix="orca-bundle.")
-		debug("Created new bundle for build: %s" % (bundle_path,))
+		bundle_path = self.umoci_unpack_bundle()
+		config = self.umoci_runtimejson(bundle_path)
 
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
-		# TODO: Add --rootless support.
-		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
-
-		# Modify the config.json.
-		config_path = os_path_join(bundle_path, "config.json")
-		with open(config_path) as f:
-			config = json.load(f)
-
+		# Modify the config.
 		if not isjson:
 			args = self.default_shell + [" ".join(args)]
 		config["process"]["args"] = args
@@ -359,6 +373,8 @@ class Builder(object):
 				continue
 			config["process"]["env"].append("%s=%s" % (name, value))
 
+		# Save the modified config.json.
+		config_path = os_path_join(bundle_path, "config.json")
 		with open(config_path, "w") as f:
 			json.dump(config, f)
 
@@ -366,13 +382,8 @@ class Builder(object):
 		ctr_id = "orca-build-" + generate_id()
 		os_system(self.runc, "run", "--bundle="+bundle_path, ctr_id)
 
-		# Repack the image.
-		os_system(self.umoci, "repack", "--image="+oci_destination, bundle_path)
-
-		# TODO: Delete the bundle.
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		# Repack the damn thing.
+		self.umoci_repack_bundle(bundle_path)
 
 	def _dispatch_entrypoint(self, *args, isjson=False):
 		# The interactions with CMD and ENTRYPOINT are quite complicated
@@ -435,13 +446,7 @@ class Builder(object):
 			# TODO: This isn't true and needs to be extended.
 			raise DockerfileFormatError("COPY can only have two arguments.")
 
-		bundle_path = tempfile.mkdtemp(prefix="orca-bundle.")
-		debug("Created new bundle for build: %s" % (bundle_path,))
-
-		oci_source = "%s:%s" % (self.image_path, self.source_tag)
-		oci_destination = "%s:%s" % (self.image_path, self.destination_tag)
-		# TODO: Add --rootless support.
-		os_system(self.umoci, "unpack", "--image="+oci_source, bundle_path)
+		bundle_path = self.umoci_unpack_bundle()
 
 		# Copy the source to the destination.
 		# NOTE: This is probably unsafe because we don't have all of the safety
@@ -457,13 +462,8 @@ class Builder(object):
 		else:
 			shutil.copy2(src, dst)
 
-		# Repack the image.
-		os_system(self.umoci, "repack", "--image="+oci_destination, bundle_path)
-
-		# TODO: Delete the bundle.
-
-		# The destination has become the ma^H^Hsource.
-		self.source_tag = self.destination_tag
+		# Repack the damn thing.
+		self.umoci_repack_bundle(bundle_path)
 
 	def _dispatch_add(self, *args, isjson=False):
 		warn("ADD implementation doesn't support {decompression,remote,chown} at the moment.")
