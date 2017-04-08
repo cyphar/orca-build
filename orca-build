@@ -327,6 +327,41 @@ class Builder(object):
 		# The destination has become the ma^H^Hsource.
 		self.source_tag = self.destination_tag
 
+	def umoci_runtimejson(self, bundle_path=None):
+		"""
+		Return the runtime-spec config.json generated from a given image. This
+		is a hack at the moment (and is quite inefficient) but will be improved
+		in umoci in the future with umoci-raw-config(1). This method returns
+		the parsed JSON.
+		"""
+
+		if bundle_path is None:
+			# TODO: Implement this with umoci-raw-config(1).
+			bundle_path = self.umoci_unpack_bundle()
+
+		config_path = os_path_join(bundle_path, "config.json")
+		with open(config_path) as f:
+			return json.load(f)
+
+	def compute_env(self, config, build_args=None):
+		"""
+		Compute the environment variable dictionary, substituting build_args
+		as per the Dockerfile precedence rules.
+		"""
+
+		if build_args is None:
+			build_args = self.build_args
+
+		# ENV always overrides ARG.
+		envdict = build_args.copy()
+		for env in config["process"]["env"]:
+			key, value = env, ""
+			if "=" in key:
+				key, value = env.split("=", maxsplit=1)
+			envdict[key] = value
+
+		return envdict
+
 	def _generate_destination(self):
 		self.destination_tag = hash_digest("sha256", self.script_hash + str(self.destination_tag) + "-next") + "-dest"
 		self.our_tags.append(self.destination_tag)
@@ -366,12 +401,7 @@ class Builder(object):
 		config["process"]["terminal"] = False # XXX: Currently terminal=true breaks because stdin is /dev/null.
 		config["root"]["readonly"] = False
 		# ARG doesn't persist in the image, so we have to set it here.
-		for name, value in self.build_args.items():
-			# ENV always overrides ARG.
-			if any(env.startswith(name + "=") for env in config["process"]["env"]):
-				debug("arg %s=%s overridden by already-set environment variable" % (name, value))
-				continue
-			config["process"]["env"].append("%s=%s" % (name, value))
+		config["process"]["env"] = ["%s=%s" % (k, v) for k, v in self.compute_env(config).items()]
 
 		# Save the modified config.json.
 		config_path = os_path_join(bundle_path, "config.json")
@@ -554,9 +584,8 @@ class Builder(object):
 
 			try:
 				# Variable substitution.
-				if cmd in VARIABLE_COMMANDS | {"run", "shell"}:
-					# TODO: Implement the envs generation from config.json.
-					envs = self.build_args
+				if cmd in VARIABLE_COMMANDS:
+					envs = self.compute_env(self.umoci_runtimejson())
 					args = [expandvars(arg, envs) for arg in args]
 
 				# Dispatch to method.
