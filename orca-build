@@ -336,10 +336,12 @@ class Builder(object):
 		"""
 
 		if bundle_path is None:
-			# TODO: Implement this with umoci-raw-config(1).
-			bundle_path = self.umoci_unpack_bundle()
+			_, config_path = tempfile.mkstemp(prefix="config.json.")
+			oci_source = "%s:%s" % (self.image_path, self.source_tag)
+			os_system(self.umoci, "raw", "runtime-config", "--image="+oci_source, config_path)
+		else:
+			config_path = os.path.join(bundle_path, "config.json")
 
-		config_path = os_path_join(bundle_path, "config.json")
 		with open(config_path) as f:
 			return json.load(f)
 
