@@ -25,7 +25,7 @@ works pretty well.
 
 ```
 usage: orca-build [-h] [--clean] [--gc] [--output OUTPUT] [--verbose]
-                  [--build-arg NAME=value] [-t TAGS]
+                  [--rootless] [--build-arg NAME=value] [-t TAGS]
                   ctx
 
 Build an OCI image from a Dockerfile context. Rootless containers are also
@@ -44,6 +44,7 @@ optional arguments:
   --output OUTPUT       Path of OCI image to output to (if unspecified, a new
                         image is created in /tmp).
   --verbose             Output debugging information.
+  --rootless            Enable rootless containers mode.
   --build-arg NAME=value
                         Build-time arguments used in conjunction with ARG.
   -t TAGS, --tag TAGS   Tag(s) of the output image (by default, randomly
