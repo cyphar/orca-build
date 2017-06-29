@@ -17,6 +17,7 @@
 import os
 import re
 import sys
+import stat
 import json
 import shlex
 import random
@@ -132,6 +133,90 @@ def os_path_clean(orig_path):
 		path = "/"
 
 	return path
+
+def os_path_sjoin(root, unsafe, nlinks=255):
+	"""
+	os_path_sjoin *safely* joins a @root path and an "@unsafe" component, such
+	that the returned path both lexically and (when evaluated) resolves to be
+	underneath the given root path.
+
+	The concept of "safety" here is a bit nuanced, and is not necessarily a
+	desired trait in all situations. In a sentence, safely appending a path to
+	a "root path" means that the resulting path is guaranteed to be evaluated
+	within the root path (both lexically and on the filesystem). In order for
+	this to be generally guaranteed, all symlink components are expanded and
+	all lexical tokens such as '.' and '..' are evaluated in the same fashion
+	the OS would evaluate them.
+
+	However, this evaluation is always rooted under @root. A good way of
+	thinking about this is that "/"+@unsafe is fully evaluated inside a
+	chroot(@root) environment, and the final result is appended to @root.
+
+	For comparison, os.path.join will not give you any of these guarantees.
+	".." will happily be appended to a path, giving you a path that resolves
+	outside the root. Symlinks are completely ignored. While this may work in
+	some cases, it does not work if you want to safely access paths inside a
+	container.
+
+	This function is a Python port of a (rejected) proposal for
+	filepath.SecureJoin in the Go standard library[1]. It is used by several
+	container runtimes to safely evaluate paths inside container root
+	filesystems.
+
+	@nlinks is the maximum number of link dereferences that are allowed before
+	sjoin will raise a RecursionError.
+
+	NOTE: The returned path is *only* safe if the filesystem is not arbitrarily
+	manipulated after this function returns (in other words, that any path
+	components are modified).
+	"""
+
+	num_deref = 0
+	current = ""
+
+	while unsafe:
+		if num_deref > nlinks:
+			raise RecursionError("too many symlinks dereferenced")
+
+		# Get the next path component from unsafe.
+		if os.pathsep in unsafe:
+			p, unsafe = unsafe.split(os.pathsep, maxsep=1)
+		else:
+			p, unsafe = unsafe, ""
+
+		# Clean the path, using the lexical semantics of /../a == /a to create
+		# a "scoped" path component that can safely be added to current for
+		# evaluation. At this moment, current is guaranteed to not have any
+		# symlink components so cleaning is entirely correct.
+		cleaned = os_path_clean(os.path.join(os.pathsep, current, p))
+		if cleaned == os.pathsep:
+			current = ""
+			continue
+		full = os_path_clean(os.path.join(root, cleaned))
+
+		# Is the path a symlink?
+		try:
+			issymlink = stat.S_ISLNK(os.lstat(full).st_mode)
+		except FileNotFoundError:
+			# We treat non-existant paths as non-symlinks. There's not much
+			# better we can do here.
+			issymlink = False
+
+		# Not a symlink, add to the current path.
+		if not issymlink:
+			current += p + os.pathsep
+			continue
+
+		# Dereference the symlink, and prepend it to the rest of the
+		# still-to-be-resolved path.
+		num_deref += 1
+		dest = os.readlink(full)
+		if os.path.isabs(dest):
+			current = ""
+		unsafe = dest + os.pathsep + unsafe
+
+	full = os_path_clean(os.pathsep + current)
+	return os_path_clean(root + full)
 
 def expandvars(string, envs):
 	"""
@@ -263,10 +348,7 @@ class Builder(object):
 
 	def safepath(self, path):
 		"Returns a safe version of the given path."
-		path = os_path_clean(path)
-		path = os_path_join(self.root, path)
-		path = os_path_clean(path)
-		return path
+		return os_path_sjoin(self.root, path)
 
 	def __init__(self, root, build_args=None, script="Dockerfile", rootless=False):
 		self.root = root
@@ -346,7 +428,7 @@ class Builder(object):
 			oci_source = "%s:%s" % (self.image_path, self.source_tag)
 			os_system(self.umoci, "raw", "runtime-config", "--image="+oci_source, config_path)
 		else:
-			config_path = os.path.join(bundle_path, "config.json")
+			config_path = os_path_join(bundle_path, "config.json")
 
 		with open(config_path) as f:
 			return json.load(f)
@@ -487,14 +569,12 @@ class Builder(object):
 		bundle_path = self.umoci_unpack_bundle()
 
 		# Copy the source to the destination.
-		# NOTE: This is probably unsafe because we don't have all of the safety
-		#       of FollowSymlinkInScope.
 		src = self.safepath(args[0])
-		dst = os_path_clean(os_path_join(bundle_path, "rootfs", os_path_clean(args[1])))
+		dst = os_path_sjoin(os_path_join(bundle_path, "rootfs"), args[1])
 		debug("recursive copy %s -> %s" % (src, dst))
 		if os.path.isdir(dst):
 			# This probably isn't correct.
-			dst = os_path_join(dst, os.path.basename(src))
+			dst = os_path_sjoin(dst, os.path.basename(src))
 		if os.path.isdir(src):
 			shutil.copytree(src, dst, symlinks=True)
 		else:
