@@ -93,11 +93,21 @@ orca-build[INFO] BUILD: created tags ['some-tag']
 ### Installation ###
 
 I don't know how to do the whole "installation" thing with Python, so here's
-how you install `orca-build`. It only depends on the standard library (and having the
-above tools in your `$PATH`):
+how you install `orca-build`. It only depends on the standard library (and
+having the above tools in your `$PATH`).
 
 ```
-% sudo install -m0755 -D orca-build /usr/bin/orca-build
+% sudo make install
+```
+
+If you want to make sure that `umoci`, `skopeo` and `runc` will play nicely
+together, you can use `make check`. It will attempt to run through a trivial
+usage of rootless containers with the tools above. If this fails, update your
+installation accordingly. This tweaking should not be necessary in future
+versions.
+
+```
+% make check
 ```
 
 I've only tested it with Python 3.6, but it should work with most modern Python
