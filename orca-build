@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import json
+import stat
 import shlex
 import random
 import shutil
@@ -132,6 +133,69 @@ def os_path_clean(orig_path):
 		path = "/"
 
 	return path
+
+def secure_join(root, unsafe):
+	"""
+	secure_join joins two given path components, similar to os.path.join,
+	except that the returned path is guaranteed to be scoped inside the
+	provided root path (when evaluated). Any symbolic links in the path are
+	evaluated with the given root treated as the root of the filesystem,
+	similar to a chroot.
+
+	Note that the guarantees provided by this function only apply if the path
+	components in the returned string are not modified (in other words are not
+	replaced with symlinks or modified mountpoints) after this function has
+	returned.  Such a symlink race is necessarily out-of-scope of secure_join.
+	"""
+
+	n = 0
+	path = ""
+	while unsafe:
+		if n > 255:
+			raise SecureJoinError("Too many levels of symbolic links")
+
+		# Next path component, partial.
+		try:
+			i = unsafe.index(os.path.sep)
+			partial, unsafe = unsafe[:i], unsafe[i+1:]
+		except ValueError:
+			partial, unsafe = unsafe, ""
+
+		# Create a cleaned path, using the lexical semantics of /../a, to
+		# create a "scoped" path component which can safely be joined to fullP
+		# for evaluation. At this point, path.String() doesn't contain any
+		# symlink components.
+		clean_path = os_path_clean(os.path.sep + path + partial)
+		if clean_path == os.path.sep:
+			path = ""
+			continue
+		full_path = os_path_clean(root + clean_path)
+
+		# Is the path a symlink?
+		islnk = False
+		try:
+			stat_t = os.lstat(full_path)
+			islnk = stat.S_ISLNK(stat_t.st_mode)
+		except FileNotFoundError:
+			pass
+
+		# Treat non-existent path components the same as non-symlinks (we can't
+		# do any better here).
+		if not islnk:
+			path += partial + os.path.sep
+			continue
+
+		# Only increment if we dereference a link.
+		n += 1
+
+		# Figure out the target link and clean up unsafe.
+		dest = os.readlink(full_path)
+		if os.path.isabs(dest):
+			path = ""
+		unsafe = dest + os.path.sep + unsafe
+
+	full_path = os_path_clean(os.path.sep + path)
+	return os_path_clean(root + full_path)
 
 def expandvars(string, envs):
 	"""
@@ -263,10 +327,7 @@ class Builder(object):
 
 	def safepath(self, path):
 		"Returns a safe version of the given path."
-		path = os_path_clean(path)
-		path = os_path_join(self.root, path)
-		path = os_path_clean(path)
-		return path
+		return secure_join(self.root, path)
 
 	def __init__(self, root, build_args=None, script="Dockerfile", rootless=False):
 		self.root = root
@@ -346,7 +407,7 @@ class Builder(object):
 			oci_source = "%s:%s" % (self.image_path, self.source_tag)
 			os_system(self.umoci, "raw", "runtime-config", "--image="+oci_source, config_path)
 		else:
-			config_path = os.path.join(bundle_path, "config.json")
+			config_path = os_path_join(bundle_path, "config.json")
 
 		with open(config_path) as f:
 			return json.load(f)
@@ -485,16 +546,15 @@ class Builder(object):
 			raise DockerfileFormatError("COPY can only have two arguments.")
 
 		bundle_path = self.umoci_unpack_bundle()
+		rootfs_path = os_path_join(bundle_path, "rootfs")
 
 		# Copy the source to the destination.
-		# NOTE: This is probably unsafe because we don't have all of the safety
-		#       of FollowSymlinkInScope.
-		src = self.safepath(args[0])
-		dst = os_path_clean(os_path_join(bundle_path, "rootfs", os_path_clean(args[1])))
+		src = secure_join(self.root, args[0])
+		dst = secure_join(rootfs_path, args[1])
 		debug("recursive copy %s -> %s" % (src, dst))
 		if os.path.isdir(dst):
 			# This probably isn't correct.
-			dst = os_path_join(dst, os.path.basename(src))
+			dst = secure_join(dst, os.path.basename(src))
 		if os.path.isdir(src):
 			shutil.copytree(src, dst, symlinks=True)
 		else:
@@ -505,7 +565,7 @@ class Builder(object):
 
 	def _dispatch_add(self, *args, isjson=False):
 		warn("ADD implementation doesn't support {decompression,remote,chown} at the moment.")
-		return self._dispatch_copy(self, *args, isjson=False)
+		return self._dispatch_copy(self, *args, isjson=isjson)
 
 	def _dispatch_volume(self, *args, isjson=False):
 		# Generate args.
