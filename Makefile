@@ -17,6 +17,7 @@
 
 PREFIX ?= /usr
 BINDIR ?= $(PREFIX)/bin
+VERSION := $(shell cat ./VERSION)
 
 .PHONY: orca-build
 orca-build:
@@ -30,6 +31,7 @@ orca-build:
 .PHONY: install
 install:
 	install -D -m0755 orca-build $(BINDIR)/orca-build
+	sed -i '{1s|^#!/usr/bin/env |#!/usr/bin/|;s|^__version__ =.*|__version__ = "$(VERSION)"|;}' $(BINDIR)/orca-build
 
 .PHONY: uninstall
 uninstall:

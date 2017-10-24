@@ -29,7 +29,7 @@ import argparse
 import tempfile
 import subprocess
 
-VARIABLE_COMMANDS = {"add", "copy", "env", "expose", "label", "user", "workdir", "volume", "stopsignal"}
+__version__ = "<unknown-version>"
 
 class attrdict(object):
 	"Dumb implementation of attrdict."
@@ -324,6 +324,8 @@ class Builder(object):
 	"""
 	Builder represents a builder instance.
 	"""
+
+	VARIABLE_COMMANDS = {"add", "copy", "env", "expose", "label", "user", "workdir", "volume", "stopsignal"}
 
 	def safepath(self, path):
 		"Returns a safe version of the given path."
@@ -652,7 +654,7 @@ class Builder(object):
 
 			try:
 				# Variable substitution.
-				if cmd in VARIABLE_COMMANDS:
+				if cmd in self.VARIABLE_COMMANDS:
 					envs = self.compute_env(self.umoci_runtimejson())
 					args = [expandvars(arg, envs) for arg in args]
 
@@ -721,6 +723,7 @@ if __name__ == "__main__":
 		parser.add_argument("--output", default=None, help="Path of OCI image to output to (if unspecified, a new image is created in /tmp).")
 		parser.add_argument("--verbose", action="store_const", const=True, help="Output debugging information.")
 		parser.add_argument("--rootless", action="store_const", const=True, default=False, help="Enable rootless containers mode.")
+		parser.add_argument("--version", action="version", version="%(prog)s " + __version__, help="Version information.")
 		# Docker compat.
 		parser.add_argument("--build-arg", metavar="NAME=value", dest="build_args", action=BuildArgsAction, help="Build-time arguments used in conjunction with ARG.")
 		parser.add_argument("-t", "--tag", dest="tags", action="append", default=None, help="Tag(s) of the output image (by default, randomly generated).")
