@@ -31,6 +31,10 @@ import subprocess
 
 __version__ = "<unknown-version>"
 
+if sys.version_info < (3, 5):
+	print("python >= 3.5 is needed to run orca-build")
+	sys.exit(1)
+
 class attrdict(object):
 	"Dumb implementation of attrdict."
 	def __init__(self, *args, **kwargs):
